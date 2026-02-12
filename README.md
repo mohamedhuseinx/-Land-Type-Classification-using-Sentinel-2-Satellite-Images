@@ -9,10 +9,15 @@ This project is part of the Digital Egypt Pioneers Initiative (DEPI) under the A
 Tech Stack
 
 Language: Python
+
 Deep Learning: TensorFlow / PyTorch 
+
 Data Processing: NumPy, Pandas, Scikit-Learn
+
 Geospatial Tools: QGIS 
+
 Deployment: Flask / FastAPI 
+
 MLOps: MLflow / DVC (for experiment tracking and versioning) 
 
 Dataset
