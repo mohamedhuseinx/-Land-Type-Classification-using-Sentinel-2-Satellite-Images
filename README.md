@@ -1,90 +1,165 @@
-Land Type Classification using Sentinel-2 Satellite Images
+# 🛰 Sentinel-2 Land Type Classification
 
-Project Overview
+## 📌 Overview
 
-This project focuses on leveraging Deep Neural Networks (DNNs) to classify various land types based on multispectral satellite imagery from the European Space Agency's Sentinel-2 mission. The goal is to develop a robust model capable of accurately identifying categories such as agriculture, water, urban areas, desert, roads, and trees to aid in urban planning and environmental monitoring.
+This project focuses on **Land Use and Land Cover Classification** using satellite images from Sentinel-2.
+The goal is to build a **Deep Learning model** that can classify land types (e.g., agricultural, forest, water, urban) from satellite imagery.
 
-This project is part of the Digital Egypt Pioneers Initiative (DEPI) under the AI & Data Science Track.
+---
 
-Tech Stack
+## 🎯 Objectives
 
-Language: Python
+* Build a **CNN model** for satellite image classification
+* Improve performance using **Data Augmentation**
+* Compare **Custom CNN** vs **Transfer Learning models**
+* Deploy the model through an **API**
 
-Deep Learning: TensorFlow / PyTorch 
+---
 
-Data Processing: NumPy, Pandas, Scikit-Learn
+## 📂 Dataset
 
-Geospatial Tools: QGIS 
+The project uses the **EuroSAT (RGB version)** dataset:
 
-Deployment: Flask / FastAPI 
+* ~27,000 images
+* 10 classes
+* Image size: 64×64 (RGB)
 
-MLOps: MLflow / DVC (for experiment tracking and versioning) 
+### Classes:
 
-Dataset
+* AnnualCrop
+* Forest
+* HerbaceousVegetation
+* Highway
+* Industrial
+* Pasture
+* PermanentCrop
+* Residential
+* River
+* SeaLake
 
-The project utilizes multispectral images capturing various spectral bands (Red, Green, Blue, Near Infrared, etc.).
+---
 
-Sources: Copernicus Open Access Hub or USGS Earth Explorer.
+## 🧠 Methodology
 
-Reference Dataset: EuroSat Dataset (labeled satellite images for land type classification).
+### 1. Data Exploration (EDA)
 
-Project Milestones
+* Analyze class distribution
+* Verify dataset balance
+* Visualize sample images
 
-The development follows a structured data science lifecycle divided into 5 key milestones:
+### 2. Data Preprocessing
 
-1. Data Collection & Preprocessing
+* Resize images to 224×224
+* Normalize pixel values to [0, 1]
+* Train/Validation split (80/20)
+* Apply Data Augmentation (training set only)
 
-Acquiring Sentinel-2 imagery and EuroSat data.
+### 3. Model Building
 
-Applying atmospheric correction, image normalization, and resizing.
+* Custom CNN architecture
+* Transfer Learning (ResNet / EfficientNet) *(planned)*
 
-Performing image augmentation (rotations, flips) to improve model generalization.
+### 4. Evaluation
 
-Calculating vegetation indices like NDVI for better classification.
+* Accuracy
+* Loss curves
+* Confusion Matrix *(planned)*
 
-2. Advanced Data Analysis & Model Selection
+### 5. Deployment
 
-Analyzing spectral band relationships and dimensionality reduction using PCA.
+* Build an API using FastAPI
+* Upload an image and return predicted class
 
-Selecting architectures like CNN, ResNet, or U-Net.
+---
 
-Utilizing Transfer Learning with pre-trained models (e.g., ImageNet).
+## 📁 Project Structure
 
-3. Model Development & Training
+```bash
+Sentinel2-Land-Classification/
+│
+├── data/
+│   ├── raw/
+│   └── processed/
+│
+├── notebooks/
+│   ├── 01_EDA_Preprocessing.ipynb
+│   ├── 02_Model_Building.ipynb
+│
+├── src/
+│   ├── model.py
+│   ├── train.py
+│   ├── evaluate.py
+│
+├── models/
+│   └── land_classifier.h5
+│
+├── app/
+│   └── main.py
+│
+├── reports/
+│   └── EDA_Report.pdf
+│
+├── README.md
+└── requirements.txt
+```
 
-Implementing DNN/CNN models using TensorFlow/PyTorch.
+---
 
-Optimizing performance through Hyperparameter Tuning (Grid Search / Random Search).
+## 🚀 How to Run
 
-Evaluation using Confusion Matrices, F1-score, and Class Activation Maps (CAM).
+### 1. Clone the repository
 
-4. Deployment & Monitoring
+```bash
+git clone https://github.com/your-username/Sentinel2-Land-Classification.git
+cd Sentinel2-Land-Classification
+```
 
-Deploying the final model as a REST API.
+### 2. Create a virtual environment
 
-Building an interactive web application for real-time land classification.
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
 
-Setting up monitoring tools to track model drift and performance.
+### 3. Install dependencies
 
+```bash
+pip install -r requirements.txt
+```
 
-5. Final Documentation & Presentation
+### 4. Run training
 
-Comprehensive technical report and stakeholder presentation.
+```bash
+python src/train.py
+```
 
-Deliverables
+---
 
-EDA Report: Summary of data insights and spectral distributions.
+## 📊 Results (Coming Soon)
 
-Cleaned Dataset: Preprocessed and augmented data.
+* Model accuracy
+* Training curves
+* Evaluation metrics
 
-Trained Model: Final optimized DNN model ready for production.
+---
 
-Web API: Functional deployment for image uploads.
+## 🔮 Future Work
 
-Acknowledgments
+* Improve performance using Transfer Learning
+* Add Confusion Matrix
+* Deploy the project to cloud
+* Build a dashboard
 
-Digital Egypt Pioneers Initiative (DEPI)
+---
 
-IBM Data Science Team 
+## 👨‍💻 Author
 
-Ministry of Communications and Information Technology, Egypt
+Mohamed Hussein
+Ahmed Dino
+Mustafa Yunus
+Tamer Malek
+---
+
+## 📜 License
+
+This project is for educational purposes as part of the DEPI Program.
