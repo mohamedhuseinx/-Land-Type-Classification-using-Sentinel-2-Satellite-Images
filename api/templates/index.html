@@ -420,7 +420,7 @@
           <input type="file" id="fileInput" class="hidden-input" accept="image/jpeg,image/png,image/tiff" onchange="handleFile(this.files[0])" aria-label="Choose satellite image file">
         </div>
 
-        <div class="slider-container" id="sliderContainer" role="img" aria-label="Comparison slider showing original and attention map">
+        <div class="slider-container" id="sliderContainer" role="img" aria-label="Comparison slider showing original and attention map" onclick="reloadImage()" onkeydown="if(event.key==='Enter'||event.key===' ')reloadImage()" tabindex="0" style="cursor:pointer;">
           <img class="slider-img" id="origImg" src="" alt="Original satellite image">
           <div class="slider-overlay" id="overlayContainer">
             <img id="heatmapImg" src="" alt="Model attention heatmap overlay">
@@ -432,6 +432,7 @@
           </div>
           <div class="slider-label label-before">RGB Source</div>
           <div class="slider-label label-after">Attention Map</div>
+          <div class="slider-label" style="top:10px;right:10px;bottom:auto;left:auto;font-size:0.55rem;opacity:0.5;">Click to change image</div>
         </div>
 
         <button class="btn-action" id="analyzeBtn" onclick="runAnalysis()" style="display:none;" aria-label="Run classification analysis">
@@ -526,8 +527,12 @@
         </p>
         <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap;">
           <label for="mapZoomSlider" style="font-size:0.72rem;color:var(--text-secondary);font-weight:600;font-family:var(--font-mono);">Zoom:</label>
-          <input type="range" id="mapZoomSlider" min="12" max="18" value="15" style="flex:1;max-width:160px;accent-color:var(--amber);height:3px;" aria-label="Map zoom level">
+          <input type="range" id="mapZoomSlider" min="12" max="18" value="15" style="flex:1;max-width:140px;accent-color:var(--amber);height:3px;" aria-label="Map zoom level">
           <span id="mapZoomValue" style="font-size:0.78rem;font-weight:700;color:var(--amber);min-width:24px;font-family:var(--font-mono);" aria-live="polite">15</span>
+          <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.72rem;color:var(--text-secondary);cursor:pointer;">
+            <input type="checkbox" id="mapGridToggle" checked style="accent-color:var(--amber);width:14px;height:14px;">
+            3x3 Context
+          </label>
         </div>
         <div id="map" style="height:480px;border-radius:var(--radius-sm);border:1px solid var(--border-panel);box-shadow:0 10px 30px rgba(0,0,0,0.5);" role="application" aria-label="Interactive map for selecting satellite tiles"></div>
         <div id="map-capture-loader">
@@ -558,6 +563,11 @@
             <img id="mapHeatmapImg" src="" alt="Grad-CAM heatmap overlay">
           </div>
         </div>
+        <div id="mapGridLabel" style="font-size:0.6rem;font-family:var(--font-mono);color:var(--text-secondary);margin-top:0.25rem;display:none;">
+          <span class="status-dot" style="display:inline-block;margin-right:0.3rem;background:var(--amber);box-shadow:0 0 4px var(--amber);"></span>
+          Each cell shows per-tile prediction in the 3x3 context grid (center = highlighted)
+        </div>
+        <div id="mapTileGrid" style="display:none;margin-top:1rem;gap:3px;"></div>
         <div class="metric-list" id="mapMetricList" style="margin-top:1rem;"></div>
         <div class="diagnostic-report">
           <div class="diag-title">Terrain Signature Profile</div>
@@ -851,6 +861,10 @@
     ['dragleave','drop'].forEach(e => dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.style.borderColor = ''; dropZone.style.background = ''; }));
     function handleDrop(ev) { ev.preventDefault(); if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); }
 
+    function reloadImage() {
+      document.getElementById('fileInput').click();
+    }
+
     function handleFile(file) {
       if (!file) return;
       loadedFile = file;
@@ -965,8 +979,9 @@
       const loader = document.getElementById('map-capture-loader');
       loader.style.display = 'flex';
       const zoom = parseInt(document.getElementById('mapZoomSlider').value);
+      const useGrid = document.getElementById('mapGridToggle').checked ? 3 : 1;
       try {
-        const r = await fetch(`/predict/map-tile?lat=${lat}&lng=${lng}&zoom=${zoom}`);
+        const r = await fetch(`/predict/map-tile?lat=${lat}&lng=${lng}&zoom=${zoom}&grid=${useGrid}`);
         if (!r.ok) throw new Error((await r.json()).detail||'Tile classification failed');
         displayMapResult(await r.json(), lat, lng);
       } catch(e) { alert('Classification Error: '+e.message); }
@@ -991,7 +1006,38 @@
         document.getElementById('mapConfVal').style.cssText = 'border-color:rgba(240,90,90,0.3);color:var(--rose);background:rgba(240,90,90,0.08);';
       } else { banner.style.display = 'none'; document.getElementById('mapConfVal').style.cssText = ''; }
       buildMetricBars('mapMetricList', data.all_probabilities, data.predicted_class);
-      document.getElementById('mapCoordInfo').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)} \u00b7 Z${data.coordinates?.zoom||'?'} \u00b7 TTA:${data.tta_views||'?'}`;
+
+      // Tile grid display
+      const gridContainer = document.getElementById('mapTileGrid');
+      const gridLabel = document.getElementById('mapGridLabel');
+      if (gridContainer && data.tile_grid && data.tile_grid.length > 1) {
+        gridContainer.style.display = 'grid';
+        if (gridLabel) gridLabel.style.display = 'block';
+        const gridSize = data.grid_size || 3;
+        gridContainer.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+        gridContainer.innerHTML = '';
+        data.tile_grid.sort((a, b) => (a.dy - b.dy) || (a.dx - b.dx)).forEach(t => {
+          const cell = document.createElement('div');
+          cell.style.cssText = 'aspect-ratio:1;border-radius:4px;overflow:hidden;border:1px solid var(--border-subtle);position:relative;background:rgba(0,0,0,0.3);';
+          const isCenter = t.dx === 0 && t.dy === 0;
+          if (isCenter) cell.style.borderColor = 'var(--amber)';
+          if (t.error) {
+            cell.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:0.55rem;">ERR</div>';
+          } else {
+            const c = ['#0ec9b1','#3b82f6','#8b5cf6','#f0a500','#f05a5a','#06b6d4'][CLASS_NAMES.indexOf(t.predicted_class) % 6];
+            cell.innerHTML = `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(5,8,15,0.6);backdrop-filter:blur(2px);">
+              <span style="color:${c};font-weight:700;font-size:0.55rem;font-family:var(--font-mono);text-shadow:0 1px 4px rgba(0,0,0,0.8);">${t.predicted_class.slice(0,4)}</span>
+              <span style="color:#fff;font-size:0.5rem;font-family:var(--font-mono);opacity:0.7;">${(t.confidence*100).toFixed(0)}%</span>
+            </div>`;
+          }
+          gridContainer.appendChild(cell);
+        });
+      } else if (gridContainer) {
+        gridContainer.style.display = 'none';
+        if (gridLabel) gridLabel.style.display = 'none';
+      }
+
+      document.getElementById('mapCoordInfo').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)} \u00b7 Z${data.coordinates?.zoom||'?'} \u00b7 TTA:${data.tta_views||'?'} \u00b7 Tiles:${data.tiles_classified||'?'}`;
       const color = data.low_confidence ? '#f05a5a' : '#0ec9b1';
       L.circleMarker([lat,lng], {radius:7, fillColor:color, color:'#fff', weight:2, fillOpacity:0.8}).addTo(myMap).bindTooltip(data.predicted_class+' ('+(data.confidence*100).toFixed(0)+'%)', {permanent:false});
       panel.scrollIntoView({behavior:'smooth', block:'start'});
@@ -1056,6 +1102,7 @@
     // Expose to global
     window.switchTab = switchTab;
     window.fetchSettingsInfo = fetchSettingsInfo;
+    window.reloadImage = reloadImage;
     window.handleFile = handleFile;
     window.loadSample = loadSample;
     window.runAnalysis = runAnalysis;

@@ -475,78 +475,110 @@ async def predict_map_tile(
     lat: float = Query(..., description="Latitude of the target location"),
     lng: float = Query(..., description="Longitude of the target location"),
     zoom: int = Query(15, description="Zoom level for the satellite tile (12-18)"),
+    grid: int = Query(1, description="Grid size: 1 (single tile) or 3 (3x3 spatial context)"),
 ):
     """
-    Fetch a clean satellite tile directly from the tile server for the given
-    coordinates and classify it using Test-Time Augmentation for robustness.
-    This avoids the noisy html2canvas screenshot approach.
+    Fetch satellite tiles directly from the tile server and classify them.
+    Supports single tile (grid=1) or 3x3 context grid (grid=3) for spatial awareness.
+    Each tile is classified with Test-Time Augmentation for robustness.
     """
     zoom = max(12, min(18, zoom))
-    tile_x, tile_y = _lat_lng_to_tile(lat, lng, zoom)
+    center_x, center_y = _lat_lng_to_tile(lat, lng, zoom)
+    grid = 1 if grid not in (1, 3) else grid
 
-    # Fetch satellite tile from Esri World Imagery
-    tile_url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{tile_y}/{tile_x}"
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(tile_url)
-            resp.raise_for_status()
-            tile_bytes = resp.content
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch satellite tile: {str(e)}")
-
-    try:
-        image = Image.open(io.BytesIO(tile_bytes)).convert("RGB")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to decode tile image: {str(e)}")
+    # Build list of (tile_x, tile_y, dx, dy) to fetch
+    offsets = [(0, 0)] if grid == 1 else [(-1,-1),(0,-1),(1,-1),(-1,0),(0,0),(1,0),(-1,1),(0,1),(1,1)]
+    tile_coords = [(center_x + dx, center_y + dy, dx, dy) for dx, dy in offsets]
 
     model = get_model()
+    tile_results = []
+    center_raw_bytes = None
+    sum_probs = None
 
-    # Test-Time Augmentation: average predictions over multiple augmented views
-    tta_tensors = preprocess_image_tta(image)
-    all_probs_list = []
-    with torch.no_grad():
-        for tensor in tta_tensors:
-            tensor = tensor.to(device)
-            outputs = model(tensor)
-            probs = torch.softmax(outputs, dim=1)[0]
-            all_probs_list.append(probs.cpu().numpy())
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for tx, ty, dx, dy in tile_coords:
+            tile_url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{zoom}/{ty}/{tx}"
+            try:
+                resp = await client.get(tile_url)
+                resp.raise_for_status()
+                tile_bytes = resp.content
+                tile_img = Image.open(io.BytesIO(tile_bytes)).convert("RGB")
+            except Exception:
+                tile_results.append({"dx": dx, "dy": dy, "error": True})
+                continue
 
-    # Average across all augmented views
-    avg_probs = np.mean(all_probs_list, axis=0)
+            if dx == 0 and dy == 0:
+                center_raw_bytes = tile_bytes
+
+            tta_tensors = preprocess_image_tta(tile_img)
+            probs_list = []
+            with torch.no_grad():
+                for tensor in tta_tensors:
+                    tensor = tensor.to(device)
+                    outputs = model(tensor)
+                    probs = torch.softmax(outputs, dim=1)[0]
+                    probs_list.append(probs.cpu().numpy())
+
+            avg = np.mean(probs_list, axis=0)
+            idx = int(np.argmax(avg))
+            cls_name = CLASS_NAMES[idx]
+            conf = float(avg[idx])
+            tile_b64 = f"data:image/jpeg;base64,{base64.b64encode(tile_bytes).decode('utf-8')}"
+
+            tile_results.append({
+                "dx": dx, "dy": dy,
+                "predicted_class": cls_name,
+                "confidence": round(conf, 4),
+                "error": False,
+            })
+
+            if sum_probs is None:
+                sum_probs = avg
+            else:
+                sum_probs += avg
+
+    if sum_probs is None:
+        raise HTTPException(status_code=502, detail="Failed to fetch any tiles")
+
+    num_tiles = len([t for t in tile_results if not t["error"]])
+    avg_probs = sum_probs / max(num_tiles, 1)
     predicted_idx = int(np.argmax(avg_probs))
-    confidence = float(avg_probs[predicted_idx])
     predicted_class = CLASS_NAMES[predicted_idx]
+    confidence = float(avg_probs[predicted_idx])
+
+    votes = {}
+    for t in tile_results:
+        if not t["error"]:
+            votes[t["predicted_class"]] = votes.get(t["predicted_class"], 0) + 1
+    majority_class = max(votes, key=votes.get) if votes else predicted_class
 
     all_probs = {name: round(float(p), 4) for name, p in zip(CLASS_NAMES, avg_probs)}
 
-    # Generate Grad-CAM on the clean (first) tensor
+    # Grad-CAM on center tile
     heatmap_base64 = ""
-    try:
-        img_tensor_cam = tta_tensors[0].to(device)
-        img_tensor_cam.requires_grad = True
-        if hasattr(model, 'features') and len(model.features) > 18:
-            target_layer = model.features[18]
-        else:
-            conv_layers = [m for m in model.modules() if isinstance(m, nn.Conv2d)]
-            target_layer = conv_layers[-1]
-        gradcam = GradCAM(model, target_layer)
-        cam = gradcam.generate(img_tensor_cam, predicted_idx)
-        if cam is not None:
-            orig_w, orig_h = image.size
-            cam_resized = cv2.resize(cam, (orig_w, orig_h))
-            img_np = np.array(image)
-            heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
-            heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-            overlay = cv2.addWeighted(img_np, 0.6, heatmap, 0.4, 0)
-            is_success, buffer = cv2.imencode(".jpg", cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
-            if is_success:
-                heatmap_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
-        gradcam.remove_hooks()
-    except Exception as gc_err:
-        logger.error(f"Grad-CAM on map tile failed: {gc_err}")
+    if center_raw_bytes is not None:
+        try:
+            center_img = Image.open(io.BytesIO(center_raw_bytes)).convert("RGB")
+            ct = preprocess_image(center_img).to(device)
+            ct.requires_grad = True
+            target = model.features[18] if hasattr(model, 'features') and len(model.features) > 18 else list(model.modules())[-3]
+            gradcam = GradCAM(model, target)
+            cam = gradcam.generate(ct, predicted_idx)
+            if cam is not None:
+                ow, oh = center_img.size
+                cr = cv2.resize(cam, (ow, oh))
+                inp = np.array(center_img)
+                hm = cv2.applyColorMap(np.uint8(255 * cr), cv2.COLORMAP_JET)
+                hm = cv2.cvtColor(hm, cv2.COLOR_BGR2RGB)
+                ov = cv2.addWeighted(inp, 0.6, hm, 0.4, 0)
+                ok, buf = cv2.imencode(".jpg", cv2.cvtColor(ov, cv2.COLOR_RGB2BGR))
+                if ok:
+                    heatmap_base64 = f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
+            gradcam.remove_hooks()
+        except Exception as gc_err:
+            logger.error(f"Grad-CAM failed: {gc_err}")
 
-    # Also encode the original tile as base64 for the frontend
-    orig_base64 = f"data:image/jpeg;base64,{base64.b64encode(tile_bytes).decode('utf-8')}"
+    center_tile_b64 = f"data:image/jpeg;base64,{base64.b64encode(center_raw_bytes).decode('utf-8')}" if center_raw_bytes else ""
 
     is_low_conf = confidence < CONFIDENCE_THRESHOLD
     warning_msg = ""
@@ -556,22 +588,25 @@ async def predict_map_tile(
         second_conf = float(avg_probs[second_idx])
         warning_msg = (f"Low confidence ({confidence:.0%}). The model is uncertain between "
                        f"{predicted_class} and {second_class} ({second_conf:.0%}). "
-                       f"This tile may contain mixed land types or unfamiliar terrain.")
+                       f"This area may contain mixed land types.")
 
-    logger.info(f"Map-tile prediction: {predicted_class} ({confidence:.2%}) @ ({lat:.4f}, {lng:.4f}) zoom={zoom}")
+    logger.info(f"Map classification: {majority_class} (avg {confidence:.2%}) @ ({lat:.4f}, {lng:.4f}) zoom={zoom} grid={grid}x{grid}")
 
     return {
-        "predicted_class": predicted_class,
+        "predicted_class": majority_class,
         "confidence": round(confidence, 4),
         "all_probabilities": all_probs,
         "heatmap_image": heatmap_base64,
-        "tile_image": orig_base64,
-        "description": LAND_DESCRIPTIONS.get(predicted_class, ""),
-        "rationale": LAND_RATIONALES.get(predicted_class, ""),
+        "tile_image": center_tile_b64,
+        "tile_grid": tile_results,
+        "grid_size": grid,
+        "description": LAND_DESCRIPTIONS.get(majority_class, ""),
+        "rationale": LAND_RATIONALES.get(majority_class, ""),
         "low_confidence": is_low_conf,
         "confidence_warning": warning_msg,
         "coordinates": {"lat": lat, "lng": lng, "zoom": zoom},
-        "tta_views": len(tta_tensors),
+        "tta_views": TTA_AUGMENTATIONS + 1,
+        "tiles_classified": num_tiles,
     }
 
 
