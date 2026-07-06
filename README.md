@@ -7,7 +7,19 @@ Deep Neural Network (CNN) to classify land types from ESA Sentinel-2 multispectr
 **Best Model**: Custom CNN — **97.23% test accuracy**, **0.9972 Macro AUC**
 
 ---
+## 📥 Download Models & Dataset
 
+The trained models and required project files are available on Google Drive due to GitHub file size limitations.
+
+**Google Drive:**
+https://drive.google.com/drive/folders/15DuY4JSO_LpVa19GY1nJxZJtrRKkqP4U?usp=sharing
+
+After downloading:
+1. Place the `.pth` model files inside the `models/checkpoints/` directory.
+2. Extract the dataset (if needed) into the `data/` directory while preserving the folder structure.
+3. Run the project normally.
+
+> Some large files are hosted on Google Drive because they exceed GitHub's recommended file size limits. :contentReference[oaicite:0]{index=0}
 ## Table of Contents
 1. [Project Overview](#project-overview)
 2. [Dataset](#dataset)
