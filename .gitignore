@@ -10,8 +10,8 @@ build/
 venv/
 
 # Model weights (too large for git, download instead)
-models/checkpoints/*.pth
-models/*.pth
+# models/checkpoints/*.pth
+# models/*.pth
 !models/checkpoints/.gitkeep
 
 # Data (too large for git)
